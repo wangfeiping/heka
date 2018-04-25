@@ -34,9 +34,9 @@ set(INJECT_EXE "${PROJECT_PATH}/bin/heka-inject${CMAKE_EXECUTABLE_SUFFIX}")
 set(LOGSTREAMER_EXE "${PROJECT_PATH}/bin/heka-logstreamer${CMAKE_EXECUTABLE_SUFFIX}")
 set(HEKA_CAT_EXE "${PROJECT_PATH}/bin/heka-cat${CMAKE_EXECUTABLE_SUFFIX}")
 
-option(INCLUDE_SANDBOX "Include Lua sandbox" on)
+option(INCLUDE_SANDBOX "Include Lua sandbox" off)
 option(INCLUDE_MOZSVC "Include the Mozilla services plugins" on)
-option(INCLUDE_DOCKER_PLUGINS "Include Docker plugins" on)
+option(INCLUDE_DOCKER_PLUGINS "Include Docker plugins" off)
 
 find_path(INCLUDE_GEOIP GeoIP.h /usr/local/include /usr/include /opt/local/include)
 if (NOT INCLUDE_GEOIP)

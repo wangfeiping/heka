@@ -2,10 +2,10 @@
 
 This is a new beginning for project [mozilla-services/heka](https://github.com/mozilla-services/heka) which was already deprecated.  
 This is not officially. The Reasons to go on this project:  
-> It's a really good project!
-> I want to finish my work with golang! :)
-> And the last one,
-> Data Acquisition and Processing Made Easy
+> It's a really good project!  
+> I want to finish my work with golang! :)  
+> And the last one,  
+> Data Acquisition and Processing Made Easy  
 
 
 # about [mozilla-services/heka](https://github.com/mozilla-services/heka)

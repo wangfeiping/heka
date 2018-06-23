@@ -1,4 +1,17 @@
-# Heka
+# A New Beginning
+
+This is a new beginning for project [mozilla-services/heka](https://github.com/mozilla-services/heka) which was already deprecated.  
+This is not officially. The Reasons to go on this project:  
+> It's a really good project!
+> I want to finish my work with golang! :)
+> And the last one,
+> Data Acquisition and Processing Made Easy
+
+
+# about [mozilla-services/heka](https://github.com/mozilla-services/heka)
+
+The project [mozilla-services/heka](https://github.com/mozilla-services/heka) is deprecated.   
+Please see [this email](https://mail.mozilla.org/pipermail/heka/2016-May/001059.html) for more details.
 
 Data Acquisition and Processing Made Easy
 
@@ -13,7 +26,7 @@ which will set up a Go environment, verify the prerequisites, and install all
 required dependencies. The build process also provides a mechanism for easily
 integrating external plug-in packages into the generated `hekad`. For more
 details and additional installation options see
-[Installing](https://hekad.readthedocs.org/en/latest/installing.html).
+[Installing](https://hekad.readthedocs.io/en/latest/installing.html).
 
 WARNING: YOU MUST *SOURCE* THE BUILD SCRIPT (i.e. `source build.sh`) TO
          BUILD HEKA. Setting up the Go build environment requires changes to
@@ -21,7 +34,7 @@ WARNING: YOU MUST *SOURCE* THE BUILD SCRIPT (i.e. `source build.sh`) TO
          `./build.sh`) these changes will not be made.
          
 Resources:
-* Heka project docs: http://hekad.readthedocs.org/
+* Heka project docs: https://hekad.readthedocs.io/
 * GoDoc package docs: http://godoc.org/github.com/mozilla-services/heka
 * Mailing list: https://mail.mozilla.org/listinfo/heka
 * IRC: #heka on irc.mozilla.org

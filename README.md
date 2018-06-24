@@ -1,6 +1,17 @@
-This project is deprecated. Please see [this email](https://mail.mozilla.org/pipermail/heka/2016-May/001059.html) for more details.
+# A New Beginning
 
-# Heka
+This is a new beginning for project [mozilla-services/heka](https://github.com/mozilla-services/heka) which was already deprecated.  
+This is not officially. The Reasons to go on this project:  
+> It's a really good project!  
+> I want to finish my work with golang! :)  
+> And the last one,  
+> Data Acquisition and Processing Made Easy  
+
+
+# About [mozilla-services/heka](https://github.com/mozilla-services/heka)
+
+The project [mozilla-services/heka](https://github.com/mozilla-services/heka) is deprecated.   
+Please see [this email](https://mail.mozilla.org/pipermail/heka/2016-May/001059.html) for more details.
 
 Data Acquisition and Processing Made Easy
 

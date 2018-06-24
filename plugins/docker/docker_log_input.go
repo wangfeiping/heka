@@ -10,53 +10,87 @@
 # Contributor(s):
 #   Anton Lindström (carlantonlindstrom@gmail.com)
 #   Rob Miller (rmiller@mozilla.com)
+#   Karl Matthias (karl.matthias@gonitro.com)
 #
 # ***** END LICENSE BLOCK *****/
 
 package docker
 
 import (
-	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
-	"github.com/mozilla-services/heka/message"
 	"github.com/mozilla-services/heka/pipeline"
-	"github.com/pborman/uuid"
 )
 
 type DockerLogInputConfig struct {
 	// A Docker endpoint.
-	Endpoint      string   `toml:"endpoint"`
-	CertPath      string   `toml:"cert_path"`
-	NameFromEnv   string   `toml:"name_from_env_var"`
-	FieldsFromEnv []string `toml:"fields_from_env"`
+	Endpoint                string   `toml:"endpoint"`
+	CertPath                string   `toml:"cert_path"`
+	SincePath               string   `toml:"since_path"`
+	SinceInterval           string   `toml:"since_interval"`
+	NameFromEnv             string   `toml:"name_from_env_var"`
+	FieldsFromEnv           []string `toml:"fields_from_env"`
+	FieldsFromLabels        []string `toml:"fields_from_labels"`
+	ContainerExpiryDays     int      `toml:"container_expiry_days"`
+	NewContainersReplayLogs bool     `toml:"new_containers_replay_logs"`
 }
 
 type DockerLogInput struct {
-	conf         *DockerLogInputConfig
-	stopChan     chan error
-	closer       chan struct{}
-	logstream    chan *Log
-	attachErrors chan error
-	attachMgr    *AttachManager
+	stopChan  chan error
+	closer    chan struct{}
+	attachMgr *AttachManager
+	pConfig   *pipeline.PipelineConfig
+}
+
+func (di *DockerLogInput) SetPipelineConfig(pConfig *pipeline.PipelineConfig) {
+	di.pConfig = pConfig
 }
 
 func (di *DockerLogInput) ConfigStruct() interface{} {
 	return &DockerLogInputConfig{
-		Endpoint: "unix:///var/run/docker.sock",
-		CertPath: "",
+		Endpoint:                "unix:///var/run/docker.sock",
+		CertPath:                "",
+		SincePath:               filepath.Join("docker", "logs_since.txt"),
+		SinceInterval:           "5s",
+		ContainerExpiryDays:     30,
+		NewContainersReplayLogs: true,
 	}
 }
 
 func (di *DockerLogInput) Init(config interface{}) error {
-	di.conf = config.(*DockerLogInputConfig)
+	conf := config.(*DockerLogInputConfig)
+	globals := di.pConfig.Globals
+	sincePath := globals.PrependBaseDir(conf.SincePath)
+
+	// Make sure since interval is valid.
+	sinceInterval, err := time.ParseDuration(conf.SinceInterval)
+	if err != nil {
+		return fmt.Errorf("Can't parse since_interval value '%s': %s", conf.SinceInterval,
+			err.Error())
+	}
+
+	// Make sure we have a sinces File.
+	err = EnsureSincesFile(conf, sincePath)
+	if err != nil {
+		return err
+	}
+
 	di.stopChan = make(chan error)
 	di.closer = make(chan struct{})
-	di.logstream = make(chan *Log)
-	di.attachErrors = make(chan error)
 
-	m, err := NewAttachManager(di.conf.Endpoint, di.conf.CertPath, di.attachErrors, di.conf.NameFromEnv, di.conf.FieldsFromEnv)
+	m, err := NewAttachManager(
+		conf.Endpoint,
+		conf.CertPath,
+		conf.NameFromEnv,
+		conf.FieldsFromEnv,
+		conf.FieldsFromLabels,
+		sincePath,
+		sinceInterval,
+		conf.ContainerExpiryDays,
+		conf.NewContainersReplayLogs,
+	)
 	if err != nil {
 		return fmt.Errorf("DockerLogInput: failed to attach: %s", err.Error())
 	}
@@ -66,52 +100,7 @@ func (di *DockerLogInput) Init(config interface{}) error {
 }
 
 func (di *DockerLogInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelper) error {
-	var (
-		pack *pipeline.PipelinePack
-		ok   bool
-	)
-
-	hostname := h.Hostname()
-
-	go di.attachMgr.Listen(di.logstream, di.closer)
-
-	// Get the InputRunner's chan to receive empty PipelinePacks
-	packSupply := ir.InChan()
-
-	ok = true
-	var err error
-	for ok {
-		select {
-		case logline := <-di.logstream:
-			pack = <-packSupply
-
-			pack.Message.SetType("DockerLog")
-			pack.Message.SetLogger(logline.Type) // stderr or stdout
-			pack.Message.SetHostname(hostname)   // Use the host's hosntame
-			pack.Message.SetPayload(logline.Data)
-			pack.Message.SetTimestamp(time.Now().UnixNano())
-			pack.Message.SetUuid(uuid.NewRandom())
-			for k, v := range logline.Fields {
-				message.NewStringField(pack.Message, k, v)
-			}
-
-			ir.Deliver(pack)
-
-		case err, ok = <-di.attachErrors:
-			if !ok {
-				err = errors.New("Docker event channel closed")
-				break
-			}
-			ir.LogError(fmt.Errorf("Attacher error: %s", err))
-
-		case err = <-di.stopChan:
-			ok = false
-		}
-	}
-
-	di.closer <- struct{}{}
-	close(di.logstream)
-	return err
+	return di.attachMgr.Run(ir, h.Hostname(), di.stopChan)
 }
 
 func (di *DockerLogInput) CleanupForRestart() {

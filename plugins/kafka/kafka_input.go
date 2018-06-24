@@ -10,6 +10,7 @@
 # Contributor(s):
 #   Mike Trinkala (trink@mozilla.com)
 #   Rob Miller (rmiller@mozilla.com)
+#   Matt Moyer (moyer@simple.com)
 #
 # ***** END LICENSE BLOCK *****/
 
@@ -24,9 +25,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Shopify/sarama"
 	"github.com/mozilla-services/heka/message"
 	"github.com/mozilla-services/heka/pipeline"
-	"github.com/rafrombrc/sarama"
+	"github.com/mozilla-services/heka/plugins/tcp"
 )
 
 type KafkaInputConfig struct {
@@ -38,6 +40,10 @@ type KafkaInputConfig struct {
 	MetadataRetries            int    `toml:"metadata_retries"`
 	WaitForElection            uint32 `toml:"wait_for_election"`
 	BackgroundRefreshFrequency uint32 `toml:"background_refresh_frequency"`
+
+	// TLS Config
+	UseTls bool `toml:"use_tls"`
+	Tls    tcp.TlsConfig
 
 	// Broker Config
 	MaxOpenRequests int    `toml:"max_open_reqests"`
@@ -62,10 +68,9 @@ type KafkaInput struct {
 	processMessageFailures int64
 
 	config             *KafkaInputConfig
-	clientConfig       *sarama.ClientConfig
-	consumerConfig     *sarama.ConsumerConfig
-	client             *sarama.Client
-	consumer           *sarama.Consumer
+	saramaConfig       *sarama.Config
+	consumer           sarama.Consumer
+	partitionConsumer  sarama.PartitionConsumer
 	pConfig            *pipeline.PipelineConfig
 	ir                 pipeline.InputRunner
 	checkpointFile     *os.File
@@ -141,64 +146,70 @@ func (k *KafkaInput) Init(config interface{}) (err error) {
 		k.config.Group = k.config.Id
 	}
 
-	k.clientConfig = sarama.NewClientConfig()
-	k.clientConfig.MetadataRetries = k.config.MetadataRetries
-	k.clientConfig.WaitForElection = time.Duration(k.config.WaitForElection) * time.Millisecond
-	k.clientConfig.BackgroundRefreshFrequency = time.Duration(k.config.BackgroundRefreshFrequency) * time.Millisecond
+	k.saramaConfig = sarama.NewConfig()
+	k.saramaConfig.ClientID = k.config.Id
+	k.saramaConfig.Metadata.Retry.Max = k.config.MetadataRetries
+	k.saramaConfig.Metadata.Retry.Backoff = time.Duration(k.config.WaitForElection) * time.Millisecond
+	k.saramaConfig.Metadata.RefreshFrequency = time.Duration(k.config.BackgroundRefreshFrequency) * time.Millisecond
 
-	k.clientConfig.DefaultBrokerConf = sarama.NewBrokerConfig()
-	k.clientConfig.DefaultBrokerConf.MaxOpenRequests = k.config.MaxOpenRequests
-	k.clientConfig.DefaultBrokerConf.DialTimeout = time.Duration(k.config.DialTimeout) * time.Millisecond
-	k.clientConfig.DefaultBrokerConf.ReadTimeout = time.Duration(k.config.ReadTimeout) * time.Millisecond
-	k.clientConfig.DefaultBrokerConf.WriteTimeout = time.Duration(k.config.WriteTimeout) * time.Millisecond
+	k.saramaConfig.Net.TLS.Enable = k.config.UseTls
+	if k.config.UseTls {
+		if k.saramaConfig.Net.TLS.Config, err = tcp.CreateGoTlsConfig(&k.config.Tls); err != nil {
+			return fmt.Errorf("TLS init error: %s", err)
+		}
+	}
 
-	k.consumerConfig = sarama.NewConsumerConfig()
-	k.consumerConfig.DefaultFetchSize = k.config.DefaultFetchSize
-	k.consumerConfig.MinFetchSize = k.config.MinFetchSize
-	k.consumerConfig.MaxMessageSize = k.config.MaxMessageSize
-	k.consumerConfig.MaxWaitTime = time.Duration(k.config.MaxWaitTime) * time.Millisecond
+	k.saramaConfig.Net.MaxOpenRequests = k.config.MaxOpenRequests
+	k.saramaConfig.Net.DialTimeout = time.Duration(k.config.DialTimeout) * time.Millisecond
+	k.saramaConfig.Net.ReadTimeout = time.Duration(k.config.ReadTimeout) * time.Millisecond
+	k.saramaConfig.Net.WriteTimeout = time.Duration(k.config.WriteTimeout) * time.Millisecond
+
+	k.saramaConfig.Consumer.Fetch.Default = k.config.DefaultFetchSize
+	k.saramaConfig.Consumer.Fetch.Min = k.config.MinFetchSize
+	k.saramaConfig.Consumer.Fetch.Max = k.config.MaxMessageSize
+	k.saramaConfig.Consumer.MaxWaitTime = time.Duration(k.config.MaxWaitTime) * time.Millisecond
 	k.checkpointFilename = k.pConfig.Globals.PrependBaseDir(filepath.Join("kafka",
 		fmt.Sprintf("%s.%s.%d.offset.bin", k.name, k.config.Topic, k.config.Partition)))
 
+	var offset int64
 	switch k.config.OffsetMethod {
 	case "Manual":
-		k.consumerConfig.OffsetMethod = sarama.OffsetMethodManual
 		if fileExists(k.checkpointFilename) {
-			if k.consumerConfig.OffsetValue, err = readCheckpoint(k.checkpointFilename); err != nil {
+			if offset, err = readCheckpoint(k.checkpointFilename); err != nil {
 				return fmt.Errorf("readCheckpoint %s", err)
 			}
 		} else {
 			if err = os.MkdirAll(filepath.Dir(k.checkpointFilename), 0766); err != nil {
-				return
+				return err
 			}
-			k.consumerConfig.OffsetMethod = sarama.OffsetMethodOldest
+			offset = sarama.OffsetOldest
 		}
 	case "Newest":
-		k.consumerConfig.OffsetMethod = sarama.OffsetMethodNewest
+		offset = sarama.OffsetNewest
 		if fileExists(k.checkpointFilename) {
 			if err = os.Remove(k.checkpointFilename); err != nil {
-				return
+				return err
 			}
 		}
 	case "Oldest":
-		k.consumerConfig.OffsetMethod = sarama.OffsetMethodOldest
+		offset = sarama.OffsetOldest
 		if fileExists(k.checkpointFilename) {
 			if err = os.Remove(k.checkpointFilename); err != nil {
-				return
+				return err
 			}
 		}
 	default:
 		return fmt.Errorf("invalid offset_method: %s", k.config.OffsetMethod)
 	}
 
-	k.consumerConfig.EventBufferSize = k.config.EventBufferSize
+	k.saramaConfig.ChannelBufferSize = k.config.EventBufferSize
 
-	k.client, err = sarama.NewClient(k.config.Id, k.config.Addrs, k.clientConfig)
+	k.consumer, err = sarama.NewConsumer(k.config.Addrs, k.saramaConfig)
 	if err != nil {
-		return
+		return err
 	}
-	k.consumer, err = sarama.NewConsumer(k.client, k.config.Topic, k.config.Partition, k.config.Group, k.consumerConfig)
-	return
+	k.partitionConsumer, err = k.consumer.ConsumePartition(k.config.Topic, k.config.Partition, offset)
+	return err
 }
 
 func (k *KafkaInput) addField(pack *pipeline.PipelinePack, name string,
@@ -215,8 +226,8 @@ func (k *KafkaInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelper) (err 
 	sRunner := ir.NewSplitterRunner("")
 
 	defer func() {
+		k.partitionConsumer.Close()
 		k.consumer.Close()
-		k.client.Close()
 		if k.checkpointFile != nil {
 			k.checkpointFile.Close()
 		}
@@ -227,7 +238,8 @@ func (k *KafkaInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelper) (err 
 
 	var (
 		hostname = k.pConfig.Hostname()
-		event    *sarama.ConsumerEvent
+		event    *sarama.ConsumerMessage
+		cError   *sarama.ConsumerError
 		ok       bool
 		n        int
 	)
@@ -245,30 +257,15 @@ func (k *KafkaInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelper) (err 
 		sRunner.SetPackDecorator(packDec)
 	}
 
+	eventChan := k.partitionConsumer.Messages()
+	cErrChan := k.partitionConsumer.Errors()
 	for {
 		select {
-		case event, ok = <-k.consumer.Events():
+		case event, ok = <-eventChan:
 			if !ok {
-				return
+				return nil
 			}
 			atomic.AddInt64(&k.processMessageCount, 1)
-			if event.Err != nil {
-				if event.Err == sarama.OffsetOutOfRange {
-					ir.LogError(fmt.Errorf(
-						"removing the out of range checkpoint file and stopping"))
-					if k.checkpointFile != nil {
-						k.checkpointFile.Close()
-						k.checkpointFile = nil
-					}
-					if err := os.Remove(k.checkpointFilename); err != nil {
-						ir.LogError(err)
-					}
-					return
-				}
-				atomic.AddInt64(&k.processMessageFailures, 1)
-				ir.LogError(event.Err)
-				break
-			}
 			if n, err = sRunner.SplitBytes(event.Value, nil); err != nil {
 				ir.LogError(fmt.Errorf("processing message from topic %s: %s",
 					event.Topic, err))
@@ -280,12 +277,33 @@ func (k *KafkaInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelper) (err 
 
 			if k.config.OffsetMethod == "Manual" {
 				if err = k.writeCheckpoint(event.Offset + 1); err != nil {
-					return
+					return err
 				}
 			}
 
+		case cError, ok = <-cErrChan:
+			if !ok {
+				// Don't exit until the eventChan is closed.
+				ok = true
+				continue
+			}
+			if cError.Err == sarama.ErrOffsetOutOfRange {
+				ir.LogError(fmt.Errorf(
+					"removing the out of range checkpoint file and stopping"))
+				if k.checkpointFile != nil {
+					k.checkpointFile.Close()
+					k.checkpointFile = nil
+				}
+				if err := os.Remove(k.checkpointFilename); err != nil {
+					ir.LogError(err)
+				}
+				return err
+			}
+			atomic.AddInt64(&k.processMessageFailures, 1)
+			ir.LogError(cError.Err)
+
 		case <-k.stopChan:
-			return
+			return nil
 		}
 	}
 }

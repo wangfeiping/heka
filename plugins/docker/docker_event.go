@@ -1,11 +1,11 @@
 package docker
 
 import (
+	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
-	"github.com/carlanton/go-dockerclient"
+	"github.com/fsouza/go-dockerclient"
 	"github.com/mozilla-services/heka/message"
 	"github.com/mozilla-services/heka/pipeline"
 	"github.com/pborman/uuid"
@@ -18,7 +18,7 @@ type DockerEventInputConfig struct {
 
 type DockerEventInput struct {
 	conf         *DockerEventInputConfig
-	dockerClient *docker.Client
+	dockerClient DockerClient
 	eventStream  chan *docker.APIEvents
 	stopChan     chan error
 }
@@ -30,28 +30,9 @@ func (dei *DockerEventInput) ConfigStruct() interface{} {
 	}
 }
 
-func newDockerClient(endpoint string, certpath string) (*docker.Client, error) {
-	var client *docker.Client
-	var err error
-	if certpath == "" {
-		client, err = docker.NewClient(endpoint)
-	} else {
-		key := filepath.Join(certpath, "key.pem")
-		ca := filepath.Join(certpath, "ca.pem")
-		cert := filepath.Join(certpath, "cert.pem")
-		client, err = docker.NewTLSClient(endpoint, cert, key, ca)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	return client, nil
-}
-
 func (dei *DockerEventInput) Init(config interface{}) error {
 	dei.conf = config.(*DockerEventInputConfig)
-	c, err := newDockerClient(dei.conf.Endpoint, dei.conf.CertPath)
+	c, err := newDockerClient(dei.conf.CertPath, dei.conf.Endpoint)
 	if err != nil {
 		return fmt.Errorf("DockerEventInput: failed to attach to docker event API: %s", err.Error())
 	}
@@ -80,10 +61,15 @@ func (dei *DockerEventInput) Run(ir pipeline.InputRunner, h pipeline.PluginHelpe
 	// Provides empty PipelinePacks
 	packSupply := ir.InChan()
 
+	var event *docker.APIEvents
 	ok = true
 	for ok {
 		select {
-		case event := <-dei.eventStream:
+		case event, ok = <-dei.eventStream:
+			if !ok {
+				err = errors.New("DockerEventInput: eventStream channel closed")
+				break
+			}
 			pack = <-packSupply
 			pack.Message.SetType("DockerEvent")
 			pack.Message.SetLogger(event.ID)

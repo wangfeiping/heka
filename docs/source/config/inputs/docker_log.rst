@@ -52,6 +52,39 @@ Config:
 - fields_from_env (array[string], optional):
     A list of environment variables to extract from the container and add as fields.
 
+.. versionadded:: 0.11
+
+- fields_from_labels (array[string], optional):
+    A list of labels to pull is as fields. These are pulled in last and will
+    override any fields added from fields_from_env.
+- since_path (string, optional):
+    Path to file where input will write a record of the "since" time for each
+    container to be able to not miss log records while Heka is down (see
+    Dockers `Get container logs
+    <https://docs.docker.com/engine/reference/api/docker_remote_api_v1.20/#get-container-logs>`_
+    API). Relative paths will be relative to Heka's configured
+    ``base_dir``. Defaults to `${BASE_DIR}/docker/logs_since.txt`
+- since_interval (string, optional):
+    Time interval (as supported by Go's `time.ParseDuration API
+    <https://golang.org/pkg/time/#ParseDuration>`_) that specifies how often
+    the DockerLogInput will write out the "since" file containing the most
+    recently retrieved log times for each container. Defaults to "5s". If set
+    to zero (e.g. "0s") then the file will only be written out when Heka
+    cleanly shuts down, meaning that if Heka crashes all container logs written
+    since Heka has started will be re-fetched.
+- container_expiry_days (int, optional):
+    The number of days after which to remove unseen containers from the sinces
+    file. Defaults to 30 days. This prevents containers from building up
+    in the file forever. It has the effect of replaying logs from any container
+    which was not seen for this interval but then re-appears. Containers are
+    tracked by container ID.
+- new_containers_replay_logs (bool, optional):
+    Will newly discovered containers replay all of the logs currently available
+    via the Docker logs endpoint? Defaults to true. If you are upgrading from
+    a previous version of heka, you may want to consider setting this to false
+    when first upgrading to prevent the massive replay of logs from all of
+    your existing containers.
+
 Example:
 
 .. code-block:: ini

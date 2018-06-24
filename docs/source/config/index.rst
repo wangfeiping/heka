@@ -102,7 +102,7 @@ Config:
 
 - max_pack_idle (string):
     A time duration string (e.x. "2s", "2m", "2h") indicating how long a
-    message pack can be 'idle' before its considered leaked by heka. If too
+    message pack can be 'idle' before it is considered leaked by heka. If too
     many packs leak from a bug in a filter or output then heka will eventually
     halt. This setting indicates when that is considered to have occurred.
 
@@ -169,7 +169,7 @@ Config:
 - log_flags (int):
     Control the prefix for STDOUT and STDERR logs. Common values are 3 (date
     and time, the default) or 0 (no prefix). See
-    `https://golang.org/pkg/log/#pkg-constants Go documentation`_ for details.
+    `Go documentation <https://golang.org/pkg/log/#pkg-constants>`_ for details.
 
 - full_buffer_max_retries (int):
     When Heka shuts down due to a buffer filling to capacity, the next time

@@ -24,6 +24,8 @@ Config:
     background (in milliseconds). Default is 600000 (10 minutes). Set to 0 to
     disable.
 
+- max_message_bytes (uint32)
+    Maximum size of a single message. Defaults to Heka's maximum record size.
 - max_open_reqests (int)
     How many outstanding requests the broker is allowed to have before blocking
     attempts to send. Default is 4.
@@ -77,6 +79,17 @@ Config:
     too fast will cause the producer to construct requests larger than the
     MaxRequestSize (100 MiB). Default is 50 * 1024 * 1024 (50 MiB), cannot be
     more than (MaxRequestSize - 10 KiB).
+
+.. versionadded:: 0.11
+
+- use_tls (bool, optional):
+    Specifies whether or not SSL/TLS encryption should be used for the TCP
+    connections. Defaults to false.
+
+- tls (TlsConfig, optional):
+    A sub-section that specifies the settings to be used for any SSL/TLS
+    encryption. This will only have any impact if ``use_tls`` is set to true.
+    See :ref:`tls`.
 
 Example (send various Fxa messages to a static Fxa topic):
 

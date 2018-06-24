@@ -35,6 +35,10 @@ Config:
 - queue (string):
     Name of the queue to consume from, an empty string will have the broker
     generate a name for the queue. Defaults to empty string.
+- bind_queue (string):
+    Whether the queue should be explicitly bound to the exchange. Not all
+    exchanges require the consumer to define and bind their own queue.
+    Defaults to true.
 - queue_durability (bool):
     Whether the queue is durable or not. Defaults to non-durable.
 - queue_exclusive (bool):
@@ -107,3 +111,45 @@ following:
         [leftovers.MessageFields]
         Type = "drop"
         Payload = ""
+
+If the downstream heka messages are delimited by Heka's :ref:`stream_framing`,
+you will need to specify "HekaFramingSplitter" as the AMQPInput splitter. An example
+would look like:
+
+.. code-block:: ini
+
+    [rsyslog-mq-input]
+    type = "AMQPInput"
+    url = "amqp://guest:guest@rabbitmq/"
+    exchange = "system-logs"
+    exchange_type = "topic"
+    exchange_durability = true
+    exchange_auto_delete = false
+    routing_key = "system.rsyslog"
+    queue = "rsyslog-logs"
+    queue_durability = true
+    queue_auto_delete = false
+    prefetch_count = 20
+    decoder = "rsyslog-multidecoder"
+    splitter = "HekaFramingSplitter"
+
+        [rsyslog-mq-input.retries]
+        max_delay = "180s"
+        delay = "30s"
+        max_retries = -1
+
+    [rsyslog-multidecoder]
+    type = "MultiDecoder"
+    subs = ["ProtobufDecoder", "rsyslog-decoder"]
+    cascade_strategy = "all"
+    log_sub_errors = true
+
+    [ProtobufDecoder]
+
+    [rsyslog-decoder]
+    type = "SandboxDecoder"
+    filename = "/usr/share/heka/lua_decoders/rsyslog.lua"
+
+        [rsyslog-decoder.config]
+        hostname_keep = true
+        template = '%TIMESTAMP% %HOSTNAME% %syslogtag%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\n'

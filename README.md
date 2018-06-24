@@ -8,7 +8,7 @@ This is not officially. The Reasons to go on this project:
 > Data Acquisition and Processing Made Easy  
 
 
-# about [mozilla-services/heka](https://github.com/mozilla-services/heka)
+# About [mozilla-services/heka](https://github.com/mozilla-services/heka)
 
 The project [mozilla-services/heka](https://github.com/mozilla-services/heka) is deprecated.   
 Please see [this email](https://mail.mozilla.org/pipermail/heka/2016-May/001059.html) for more details.

@@ -56,9 +56,9 @@ func IsFileError(err error) (fileError bool) {
 
 // Loads a logstreamlocation from a file or returns an empty one if no journal
 // record was found.
-func LogstreamLocationFromFile(path string) (l *LogstreamLocation, err error) {
+func LogstreamLocationFromFile(journalPath string) (l *LogstreamLocation, err error) {
 	l = new(LogstreamLocation)
-	l.JournalPath = path
+	l.JournalPath = journalPath
 	l.lastLine = ringbuf.New(LINEBUFFERLEN)
 
 	// So that we can check to see if it exists or not.
@@ -131,6 +131,42 @@ func (l *LogstreamLocation) Reset() {
 	l.lastLine = ringbuf.New(LINEBUFFERLEN)
 }
 
+// Sets the position to the end of the file.
+func (l *LogstreamLocation) SetToTail(filePath string) (err error) {
+	var fd *os.File
+	if fd, err = os.Open(filePath); err != nil {
+		return
+	}
+	defer fd.Close()
+
+	var end, lastLinePos int64
+	if end, err = fd.Seek(0, os.SEEK_END); err != nil {
+		return
+	}
+	if lastLinePos = end - int64(LINEBUFFERLEN); lastLinePos < 0 {
+		lastLinePos = 0
+	}
+	if _, err = fd.Seek(lastLinePos, 0); err != nil {
+		return
+	}
+	buf := make([]byte, LINEBUFFERLEN)
+	var n int
+	if n, err = fd.Read(buf); err != io.EOF && err != nil {
+		return
+	}
+
+	l.Filename = filePath
+	l.SeekPosition = end
+	l.lastLine.Write(buf[:n])
+	l.GenerateHash()
+
+	return
+}
+
+func (l *LogstreamLocation) IsZero() bool {
+	return l.SeekPosition == 0 && l.Filename == "" && l.Hash == ""
+}
+
 func (l *LogstreamLocation) Save() error {
 	// If we don't have a JournalPath, ignore
 	if l.JournalPath == "" {
@@ -198,6 +234,12 @@ func (l *Logstream) NewerFileAvailable() (file string, ok bool) {
 
 	if ok {
 		// 1. NO - Try and find our location
+
+		// First make sure our file list is current. Ignore errors, since we
+		// can't do anything about them here anyway, scanning errors should be
+		// reported during the next ticker interval rescan.
+		l.set.ScanForLogstreams()
+
 		fd, _, err := l.LocatePriorLocation(false)
 
 		if err != nil && IsFileError(err) {
@@ -208,9 +250,9 @@ func (l *Logstream) NewerFileAvailable() (file string, ok bool) {
 			fd.Close()
 		}
 
-		// Unable to locate prior position in our file-stream, are there
-		// any logfiles?
 		if err != nil {
+			// Unable to locate prior position in our file-stream, are there
+			// any logfiles?
 			l.lfMutex.RLock()
 			defer l.lfMutex.RUnlock()
 			if len(l.logfiles) > 0 {
@@ -274,10 +316,10 @@ func (l *Logstream) FileHashMismatch() bool {
 	return false
 }
 
-// Locate and return a file handle seeked to the appropriate location. An error will be
-// returned if the prior location cannot be located.
-// If the logfile this location for has changed names, the position will be updated to
-// reflect the move.
+// Locate and return a file handle seeked to the appropriate location. An
+// error will be returned if the prior location cannot be located. If the
+// logfile this location for has changed names, the position will be updated
+// to reflect the move.
 func (l *Logstream) LocatePriorLocation(checkFilename bool) (fd *os.File, reader io.Reader,
 	err error) {
 
@@ -300,12 +342,13 @@ func (l *Logstream) LocatePriorLocation(checkFilename bool) (fd *os.File, reader
 		}
 	}
 
-	// Unable to locate the file, or the position wasn't where we thought it should be.
-	// Start systematically searching all the files for this location to see if it was
-	// shuffled around.
-	// TODO: Would be more efficient to start searching backwards from where we are
-	//       in the logstream at the moment.
-	for _, logfile := range l.logfiles {
+	// Unable to locate the file, or the position wasn't where we thought it
+	// should be. Start systematically searching all the files for this
+	// location to see if it was shuffled around. We start at the end and work
+	// backwards under the assumption that we're probably much closer to the
+	// end of the stream than the beginning.
+	for i := len(l.logfiles) - 1; i >= 0; i-- {
+		logfile := l.logfiles[i]
 		// Check that the file is large enough for our seek position
 		info, err = os.Stat(logfile.FileName)
 		if err != nil {
@@ -328,6 +371,9 @@ func (l *Logstream) LocatePriorLocation(checkFilename bool) (fd *os.File, reader
 			return
 		}
 		err = nil // Reset our error to nil
+		if fd != nil {
+			fd.Close()
+		}
 	}
 	// Set our default error since we were unable to locate the position
 	err = errors.New("Unable to locate position in the stream")
@@ -432,7 +478,7 @@ func SeekInFile(path string, position *LogstreamLocation) (*os.File, io.Reader, 
 		n, err = reader.Read(buf[-seekPos:])
 		expectedN = position.SeekPosition
 	}
-	if err == nil && int64(n) == expectedN {
+	if (err == nil || err == io.EOF) && int64(n) == expectedN {
 		h := sha1.New()
 		h.Write(buf)
 		tmp := fmt.Sprintf("%x", h.Sum(nil))
